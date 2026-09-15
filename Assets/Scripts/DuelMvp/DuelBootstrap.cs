@@ -1,14 +1,7 @@
-using UnityEngine;
-
 namespace ComeAndFight
 {
+    // Scene objects are serialized in SampleScene; runtime bootstrapping is intentionally disabled.
     public static class DuelBootstrap
     {
-        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
-        static void StartMvp()
-        {
-            if (Object.FindObjectOfType<DuelGame>() != null) return;
-            new GameObject("Duel MVP").AddComponent<DuelGame>();
-        }
     }
 }

@@ -1,5 +1,3 @@
-using System.Collections.Generic;
-
 namespace ComeAndFight
 {
     public static class TurnResolver
@@ -8,7 +6,11 @@ namespace ComeAndFight
 
         public static TurnResult Resolve(DuelState old, DuelAction a, DuelAction b)
         {
+            if (!CanChoose(old, true, a) || !CanChoose(old, false, b))
+                throw new System.ArgumentException("A player recovering from a whiff cannot choose Thrust.");
             var r = new TurnResult { state = old };
+            r.state.aThrustRecovering = false;
+            r.state.bThrustRecovering = false;
             int ap = old.aPosition, bp = old.bPosition;
             int an = ap + Move(a, true), bn = bp + Move(b, false);
 
@@ -53,7 +55,12 @@ namespace ComeAndFight
 
             ApplyPoints(ref r);
             if (r.boutEnded) ResetBout(ref r);
-            else AdvanceClock(ref r);
+            else
+            {
+                r.state.aThrustRecovering = r.aWhiff;
+                r.state.bThrustRecovering = r.bWhiff;
+                AdvanceClock(ref r);
+            }
             r.matchEnded = HasWinner(r.state);
             if (r.collision) r.message = "双方相撞";
             else if (string.IsNullOrEmpty(r.message)) r.message = "行动落空";
@@ -62,6 +69,8 @@ namespace ComeAndFight
 
         static void ResolveAttack(ref TurnResult r, DuelAction a, DuelAction b, bool ah, bool bh, ref int ap, ref int bp)
         {
+            r.aWhiff = a == DuelAction.Thrust && !ah;
+            r.bWhiff = b == DuelAction.Thrust && !bh;
             bool at = a == DuelAction.Thrust && ah, bt = b == DuelAction.Thrust && bh;
             if (at && b == DuelAction.Parry) { ap--; r.parry = true; at = false; if (ap < MinCell) { r.aFell = true; r.bPoints++; r.boutEnded = true; r.message = "B 招架反击！"; } }
             if (bt && a == DuelAction.Parry) { bp++; r.parry = true; bt = false; if (bp > MaxCell) { r.bFell = true; r.aPoints++; r.boutEnded = true; r.message = "A 招架反击！"; } }
@@ -83,7 +92,12 @@ namespace ComeAndFight
         }
 
         static void ApplyPoints(ref TurnResult r) { r.state.aScore += r.aPoints; r.state.bScore += r.bPoints; }
-        static void ResetBout(ref TurnResult r) { r.state.aPosition = 2; r.state.bPosition = 6; r.state.turn = 1; r.state.suddenDeath = false; r.state.fireDepth = 0; }
+        static void ResetBout(ref TurnResult r)
+        {
+            r.state.aPosition = 2; r.state.bPosition = 6; r.state.turn = 1;
+            r.state.suddenDeath = r.state.aThrustRecovering = r.state.bThrustRecovering = false;
+            r.state.fireDepth = 0;
+        }
         static void AdvanceClock(ref TurnResult r)
         {
             if (!r.state.suddenDeath && r.state.turn >= NormalTurnLimit) { r.state.suddenDeath = true; r.state.fireDepth = 1; r.message = "死斗开始！"; }
@@ -92,6 +106,7 @@ namespace ComeAndFight
         }
         static int Move(DuelAction action, bool isA) => action == DuelAction.Advance ? (isA ? 1 : -1) : action == DuelAction.Retreat ? (isA ? -1 : 1) : 0;
         static int Clamp(int p) => p < MinCell ? MinCell : p > MaxCell ? MaxCell : p;
+        public static bool CanChoose(DuelState state, bool isA, DuelAction action) => action != DuelAction.Thrust || !(isA ? state.aThrustRecovering : state.bThrustRecovering);
         public static bool IsBurning(int p, int depth) => depth > 0 && (p <= depth || p >= 8 - depth);
         public static bool HasWinner(DuelState s) => (s.aScore >= 2 || s.bScore >= 2) && s.aScore != s.bScore;
     }

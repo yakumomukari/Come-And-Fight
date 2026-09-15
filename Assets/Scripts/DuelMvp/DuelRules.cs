@@ -8,7 +8,7 @@ namespace ComeAndFight
     public struct DuelState
     {
         public int aPosition, bPosition, aScore, bScore, turn, fireDepth;
-        public bool suddenDeath;
+        public bool suddenDeath, aThrustRecovering, bThrustRecovering;
 
         public static DuelState NewMatch() => new DuelState { aPosition = 2, bPosition = 6, turn = 1 };
     }
@@ -17,7 +17,7 @@ namespace ComeAndFight
     {
         public DuelState state;
         public int aPoints, bPoints;
-        public bool aFell, bFell, aBurned, bBurned, collision, parry, thrustHit, boutEnded, matchEnded;
+        public bool aFell, bFell, aBurned, bBurned, collision, parry, thrustHit, aWhiff, bWhiff, boutEnded, matchEnded;
         public string message;
     }
 }

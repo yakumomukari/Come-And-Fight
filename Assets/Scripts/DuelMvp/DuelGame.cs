@@ -1,6 +1,6 @@
 using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace ComeAndFight
 {
@@ -18,11 +18,10 @@ namespace ComeAndFight
         bool localTwoPlayer;
         TurnPhase phase;
         string status = "选择行动";
-        Transform playerA, playerB, swordA, swordB;
-        SpriteRenderer bodyA, bodyB;
+        public Transform playerA, playerB, swordA, swordB;
+        public Image bodyA, bodyB;
+        public Image[] cells;
         Color bodyAColor, bodyBColor;
-        readonly List<SpriteRenderer> cells = new List<SpriteRenderer>();
-        Texture2D white;
 
         public DuelState State => state;
         public string Status => status;
@@ -33,13 +32,16 @@ namespace ComeAndFight
         public bool ALocked => aChoice != DuelAction.None;
         public bool BLocked => bChoice != DuelAction.None;
         public DuelAction AChoice => aChoice;
+        public bool AThrustRecovering => state.aThrustRecovering;
+        public bool BThrustRecovering => state.bThrustRecovering;
         public float RemainingTime => phase == TurnPhase.Choosing ? Mathf.Max(0, deadline - Time.time) : 0;
 
         void Awake()
         {
             state = DuelState.NewMatch();
             ConfigureCamera();
-            BuildWhitebox();
+            bodyAColor = bodyA.color; bodyBColor = bodyB.color;
+            SnapPlayers();
             BeginTurn();
         }
 
@@ -48,52 +50,20 @@ namespace ComeAndFight
             var cam = Camera.main;
             if (!cam)
             {
-                cam = new GameObject("Main Camera").AddComponent<Camera>();
-                cam.tag = "MainCamera";
+                Debug.LogError("SampleScene must contain a serialized Main Camera.");
+                enabled = false;
+                return;
             }
+            cam.rect = new Rect(0, 0, 1, 1);
             cam.orthographic = true; cam.orthographicSize = 4.8f;
             cam.transform.position = new Vector3(0, .3f, -10);
             cam.backgroundColor = new Color(.035f, .045f, .065f);
         }
 
-        void BuildWhitebox()
-        {
-            white = new Texture2D(1, 1); white.SetPixel(0, 0, Color.white); white.Apply();
-            var sprite = Sprite.Create(white, new Rect(0, 0, 1, 1), new Vector2(.5f, .5f), 1);
-            for (int i = 1; i <= 7; i++)
-            {
-                var cell = MakeSprite("格子 " + i, sprite, new Vector3(CellX(i), -1.2f, 0), new Vector3(1.08f, .18f, 1), new Color(.7f, .74f, .8f));
-                cells.Add(cell);
-            }
-            playerA = MakeFencer("玩家 A", sprite, new Color(.25f, .72f, 1f), true, out bodyA, out swordA);
-            playerB = MakeFencer("玩家 B", sprite, new Color(1f, .35f, .38f), false, out bodyB, out swordB);
-            bodyAColor = bodyA.color; bodyBColor = bodyB.color;
-            SnapPlayers();
-        }
-
-        Transform MakeFencer(string name, Sprite sprite, Color color, bool facesRight, out SpriteRenderer body, out Transform sword)
-        {
-            var root = new GameObject(name).transform;
-            body = MakeSprite("身体", sprite, new Vector3(0, .35f), new Vector3(.42f, 1.15f, 1), color);
-            body.transform.SetParent(root, false);
-            MakeSprite("头", sprite, new Vector3(0, 1.12f), new Vector3(.48f, .48f, 1), Color.white).transform.SetParent(root, false);
-            float sign = facesRight ? 1 : -1;
-            sword = MakeSprite("剑", sprite, new Vector3(sign * .58f, .55f), new Vector3(.85f, .07f, 1), Color.white).transform;
-            sword.SetParent(root, false);
-            return root;
-        }
-
-        SpriteRenderer MakeSprite(string name, Sprite sprite, Vector3 position, Vector3 scale, Color color)
-        {
-            var go = new GameObject(name); go.transform.position = position; go.transform.localScale = scale;
-            var sr = go.AddComponent<SpriteRenderer>(); sr.sprite = sprite; sr.color = color;
-            return sr;
-        }
-
         void Update()
         {
-            if (Input.GetKeyDown(KeyCode.F1)) { localTwoPlayer = !localTwoPlayer; Restart(); }
-            if (Input.GetKeyDown(KeyCode.R)) Restart();
+            if (Input.GetKeyDown(KeyCode.F1)) ToggleMode();
+            if (Input.GetKeyDown(KeyCode.R)) RestartMatch();
             if (phase != TurnPhase.Choosing) return;
 
             if (aChoice == DuelAction.None)
@@ -143,7 +113,7 @@ namespace ComeAndFight
 
         IEnumerator AnimateResolution(DuelState before, TurnResult result)
         {
-            Vector3 a0 = playerA.position, b0 = playerB.position;
+            Vector3 a0 = playerA.localPosition, b0 = playerB.localPosition;
             Vector3 at = PresentationTarget(true, before, result, aChoice);
             Vector3 bt = PresentationTarget(false, before, result, bChoice);
             Vector3 swordAScale = swordA.localScale, swordBScale = swordB.localScale;
@@ -153,8 +123,8 @@ namespace ComeAndFight
             {
                 float p = Mathf.Clamp01(t / duration);
                 float pulse = Mathf.Sin(p * Mathf.PI);
-                playerA.position = Vector3.Lerp(a0, at, Mathf.SmoothStep(0, 1, p));
-                playerB.position = Vector3.Lerp(b0, bt, Mathf.SmoothStep(0, 1, p));
+                playerA.localPosition = Vector3.Lerp(a0, at, Mathf.SmoothStep(0, 1, p));
+                playerB.localPosition = Vector3.Lerp(b0, bt, Mathf.SmoothStep(0, 1, p));
                 ApplyActionPose(aChoice, swordA, swordAScale, swordARotation, 1, pulse);
                 ApplyActionPose(bChoice, swordB, swordBScale, swordBRotation, -1, pulse);
                 bodyA.color = FeedbackColor(bodyAColor, result.aFell || result.aBurned || (result.thrustHit && result.bPoints > 0), result.parry && aChoice == DuelAction.Parry, pulse, result.aBurned);
@@ -162,8 +132,8 @@ namespace ComeAndFight
                 if (result.collision)
                 {
                     float shake = Mathf.Sin(p * Mathf.PI * 8) * .08f * (1 - p);
-                    playerA.position += Vector3.left * shake;
-                    playerB.position += Vector3.right * shake;
+                    playerA.localPosition += Vector3.left * shake * 60f;
+                    playerB.localPosition += Vector3.right * shake * 60f;
                 }
                 yield return null;
             }
@@ -191,12 +161,12 @@ namespace ComeAndFight
         {
             bool fell = isA ? result.aFell : result.bFell;
             bool burned = isA ? result.aBurned : result.bBurned;
-            if (fell) return new Vector3(CellX(isA ? 0 : 8), -2.5f);
-            if (burned) return new Vector3(CellX(isA ? before.aPosition : before.bPosition), -1.2f);
-            if (!result.boutEnded) return new Vector3(CellX(isA ? result.state.aPosition : result.state.bPosition), -.6f);
+            if (fell) return new Vector3(CellX(isA ? 0 : 8), -150f);
+            if (burned) return new Vector3(CellX(isA ? before.aPosition : before.bPosition), -70f);
+            if (!result.boutEnded) return new Vector3(CellX(isA ? result.state.aPosition : result.state.bPosition), 0);
             int start = isA ? before.aPosition : before.bPosition;
             int delta = action == DuelAction.Advance ? (isA ? 1 : -1) : action == DuelAction.Retreat ? (isA ? -1 : 1) : 0;
-            return new Vector3(CellX(Mathf.Clamp(start + delta, 1, 7)), -.6f);
+            return new Vector3(CellX(Mathf.Clamp(start + delta, 1, 7)), 0);
         }
 
         string ResultMessage(TurnResult result, DuelState before)
@@ -208,6 +178,9 @@ namespace ComeAndFight
             else if (blocked && !result.aFell && !result.bFell) message = "招架成功";
             if (result.aBurned && result.bBurned) message = "双方被火焰吞噬，不计分";
             else if (result.aBurned || result.bBurned) message = "火焰吞噬！";
+            else if (result.aWhiff && result.bWhiff) message = "双方空刺 · 下回合均不能击剑";
+            else if (result.aWhiff) message = "A 空刺 · 下回合不能击剑";
+            else if (result.bWhiff) message = "B 空刺 · 下回合不能击剑";
             if (result.aPoints > 0 || result.bPoints > 0)
             {
                 string points = result.aPoints > 0 ? "A +" + result.aPoints : "";
@@ -223,7 +196,7 @@ namespace ComeAndFight
             int distance = state.bPosition - state.aPosition;
             float advance = state.bPosition >= 6 ? 3.2f : 2f;
             float retreat = state.bPosition >= 7 ? .05f : 1f;
-            float thrust = distance <= 2 ? 3f : .4f;
+            float thrust = state.bThrustRecovering ? 0 : distance <= 2 ? 3f : .4f;
             float parry = distance <= 1 ? 2.2f : .7f;
             if (state.suddenDeath) { advance += 4f; retreat *= .15f; }
             float roll = Random.value * (advance + retreat + thrust + parry);
@@ -239,11 +212,13 @@ namespace ComeAndFight
             latestChoiceFrame = -1;
             deadline = Time.time + DecisionSeconds;
             phase = TurnPhase.Choosing;
-            status = "选择行动";
+            if (state.aThrustRecovering) status = "空刺恢复：本回合不能击剑";
+            else if (localTwoPlayer && state.bThrustRecovering) status = "B 空刺恢复：本回合不能击剑";
+            else status = "选择行动";
             RefreshBoard();
         }
 
-        void Restart()
+        public void RestartMatch()
         {
             StopAllCoroutines();
             state = DuelState.NewMatch();
@@ -252,13 +227,24 @@ namespace ComeAndFight
             SnapPlayers();
             BeginTurn();
         }
-        void SnapPlayers() { playerA.position = new Vector3(CellX(state.aPosition), -.6f); playerB.position = new Vector3(CellX(state.bPosition), -.6f); }
-        void RefreshBoard() { for (int i = 0; i < cells.Count; i++) cells[i].color = state.suddenDeath && TurnResolver.IsBurning(i + 1, state.fireDepth) ? new Color(1f, .22f, .05f) : new Color(.7f, .74f, .8f); }
-        static float CellX(int cell) => (cell - 4) * 1.18f;
+
+        public void ToggleMode()
+        {
+            localTwoPlayer = !localTwoPlayer;
+            RestartMatch();
+        }
+        void SnapPlayers() { playerA.localPosition = new Vector3(CellX(state.aPosition), 0); playerB.localPosition = new Vector3(CellX(state.bPosition), 0); }
+        void RefreshBoard() { for (int i = 0; i < cells.Length; i++) cells[i].color = state.suddenDeath && TurnResolver.IsBurning(i + 1, state.fireDepth) ? new Color(1f, .22f, .05f) : new Color(.7f, .74f, .8f); }
+        static float CellX(int cell) => (cell - 4) * 82f;
 
         public void SelectA(DuelAction action)
         {
             if (phase != TurnPhase.Choosing || aChoice != DuelAction.None) return;
+            if (!TurnResolver.CanChoose(state, true, action))
+            {
+                status = "空刺恢复：本回合不能击剑";
+                return;
+            }
             aChoice = action;
             latestChoiceFrame = Time.frameCount;
             status = "已选择：" + ActionName(action);
@@ -267,6 +253,7 @@ namespace ComeAndFight
         void SelectB(DuelAction action)
         {
             if (phase != TurnPhase.Choosing || bChoice != DuelAction.None) return;
+            if (!TurnResolver.CanChoose(state, false, action)) return;
             bChoice = action;
             latestChoiceFrame = Time.frameCount;
         }

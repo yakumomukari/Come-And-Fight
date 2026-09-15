@@ -52,6 +52,63 @@ namespace ComeAndFight.Tests
             Assert.IsTrue(r.state.suddenDeath);
             Assert.AreEqual(1, r.state.fireDepth);
         }
+
+        [Test]
+        public void MissedThrust_DisablesThrustForNextTurn()
+        {
+            var s = DuelState.NewMatch();
+            var r = TurnResolver.Resolve(s, DuelAction.Thrust, DuelAction.Parry);
+            Assert.IsTrue(r.aWhiff);
+            Assert.IsTrue(r.state.aThrustRecovering);
+            Assert.IsFalse(r.state.bThrustRecovering);
+        }
+
+        [Test]
+        public void Recovery_ClearsAfterOneTurn()
+        {
+            var s = DuelState.NewMatch(); s.aThrustRecovering = true;
+            var r = TurnResolver.Resolve(s, DuelAction.Advance, DuelAction.Parry);
+            Assert.IsFalse(r.state.aThrustRecovering);
+        }
+
+        [Test]
+        public void Recovery_RejectsAnotherThrust()
+        {
+            var s = DuelState.NewMatch(); s.aThrustRecovering = true;
+            Assert.IsFalse(TurnResolver.CanChoose(s, true, DuelAction.Thrust));
+            Assert.Throws<System.ArgumentException>(() => TurnResolver.Resolve(s, DuelAction.Thrust, DuelAction.Parry));
+        }
+
+        [Test]
+        public void BothMissedThrusts_DisableBothPlayers()
+        {
+            var s = DuelState.NewMatch();
+            var r = TurnResolver.Resolve(s, DuelAction.Thrust, DuelAction.Thrust);
+            Assert.IsTrue(r.aWhiff);
+            Assert.IsTrue(r.bWhiff);
+            Assert.IsTrue(r.state.aThrustRecovering);
+            Assert.IsTrue(r.state.bThrustRecovering);
+        }
+
+        [Test]
+        public void ParriedThrust_DoesNotTriggerRecovery()
+        {
+            var s = DuelState.NewMatch(); s.aPosition = 3; s.bPosition = 4;
+            var r = TurnResolver.Resolve(s, DuelAction.Thrust, DuelAction.Parry);
+            Assert.IsTrue(r.parry);
+            Assert.IsFalse(r.aWhiff);
+            Assert.IsFalse(r.state.aThrustRecovering);
+        }
+
+        [Test]
+        public void SuccessfulThrust_DoesNotTriggerRecovery()
+        {
+            var s = DuelState.NewMatch(); s.aPosition = 3; s.bPosition = 4;
+            var r = TurnResolver.Resolve(s, DuelAction.Thrust, DuelAction.Advance);
+            Assert.IsTrue(r.thrustHit);
+            Assert.IsFalse(r.aWhiff);
+            Assert.IsFalse(r.state.aThrustRecovering);
+        }
     }
 }
 #endif
