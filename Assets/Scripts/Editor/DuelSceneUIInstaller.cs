@@ -57,7 +57,9 @@ namespace ComeAndFight.Editor
         static void Button(DuelUI ui, Font font, string name, string caption, UnityEngine.Events.UnityAction action)
         {
             var go = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(Button)); go.layer = 5; go.transform.SetParent(ui.actionPanel.transform, false); go.GetComponent<Image>().color = new Color(.16f, .2f, .28f, .96f);
-            var button = go.GetComponent<Button>(); button.targetGraphic = go.GetComponent<Image>(); UnityEventTools.AddPersistentListener(button.onClick, action);
+            var button = go.GetComponent<Button>(); button.targetGraphic = go.GetComponent<Image>();
+            var colors = button.colors; colors.disabledColor = Color.white; colors.fadeDuration = .08f; button.colors = colors;
+            UnityEventTools.AddPersistentListener(button.onClick, action);
             var label = Text(go.transform, "Label", caption, font, 18, FontStyle.Bold, Vector2.zero, Vector2.zero, Vector2.zero); label.rectTransform.anchorMax = Vector2.one; label.rectTransform.offsetMin = label.rectTransform.offsetMax = Vector2.zero;
         }
         static void Place(RectTransform rect, Vector2 anchor, Vector2 pos, Vector2 size) { rect.anchorMin = rect.anchorMax = rect.pivot = anchor; rect.anchoredPosition = pos; rect.sizeDelta = size; }
