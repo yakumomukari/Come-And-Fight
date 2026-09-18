@@ -763,7 +763,10 @@ PlayerSettings:
   webGLMemoryGeometricGrowthCap: 96
   webGLPowerPreference: 2
   scriptingDefineSymbols:
-    Standalone: STEAMWORKS_NET
+    Android: PHOTON_REALTIME_5_OR_NEWER;FUSION_WEAVER;FUSION2;FUSION_2;FUSION_2_1;FUSION_2_1_2;FUSION_2_OR_NEWER;FUSION_2_0_OR_NEWER;FUSION_2_1_OR_NEWER;FUSION_LOGLEVEL_INFO
+    Standalone: STEAMWORKS_NET;FUSION_WEAVER;FUSION2;FUSION_2;FUSION_2_1;FUSION_2_1_2;FUSION_2_OR_NEWER;FUSION_2_0_OR_NEWER;FUSION_2_1_OR_NEWER;FUSION_LOGLEVEL_INFO
+    WebGL: FUSION_WEAVER;FUSION2;FUSION_2;FUSION_2_1;FUSION_2_1_2;FUSION_2_OR_NEWER;FUSION_2_0_OR_NEWER;FUSION_2_1_OR_NEWER;FUSION_LOGLEVEL_INFO
+    iPhone: FUSION_WEAVER;FUSION2;FUSION_2;FUSION_2_1;FUSION_2_1_2;FUSION_2_OR_NEWER;FUSION_2_0_OR_NEWER;FUSION_2_1_OR_NEWER;FUSION_LOGLEVEL_INFO
   additionalCompilerArguments: {}
   platformArchitecture: {}
   scriptingBackend: {}
@@ -786,7 +789,7 @@ PlayerSettings:
     tvOS: 1
   incrementalIl2cppBuild: {}
   suppressCommonWarnings: 1
-  allowUnsafeCode: 0
+  allowUnsafeCode: 1
   useDeterministicCompilation: 1
   additionalIl2CppArgs: 
   scriptingRuntimeVersion: 1

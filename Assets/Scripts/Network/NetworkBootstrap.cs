@@ -5,10 +5,6 @@ using System.Net.Sockets;
 using System.Threading.Tasks;
 using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
-using Unity.Networking.Transport.Relay;
-using Unity.Services.Authentication;
-using Unity.Services.Core;
-using Unity.Services.Relay;
 using UnityEngine;
 
 namespace ComeAndFight.Networking
@@ -16,10 +12,14 @@ namespace ComeAndFight.Networking
     [DefaultExecutionOrder(-1000)]
     public sealed class NetworkBootstrap : MonoBehaviour
     {
+        const string AndroidPhotonRegion = "cn";
+
         [SerializeField] string address = "";
         [SerializeField] ushort port = 7777;
         NetworkManager manager;
         NetworkTransport transport;
+        DuelNetworkController duelController;
+        PhotonDuelController photonController;
         string localAddressSummary = "Steam 尚未初始化";
         string lastConnectionError;
         bool steamInitialized = false;
@@ -33,6 +33,9 @@ namespace ComeAndFight.Networking
         public bool SteamReady => steamInitialized;
         public bool OnlineSupported => true;
         public string RoomCode => roomCode;
+        public bool IsListening => Application.isMobilePlatform ? photonController && photonController.IsRunning : manager && manager.IsListening;
+        public bool IsHost => Application.isMobilePlatform ? photonController && photonController.IsHost : manager && manager.IsHost;
+        public NetworkTurnPhase Phase => Application.isMobilePlatform && photonController ? photonController.Phase : duelController ? duelController.Phase : NetworkTurnPhase.WaitingForPlayers;
 
         public void SetAddress(string value)
         {
@@ -89,11 +92,18 @@ namespace ComeAndFight.Networking
             }
             if (manager.NetworkConfig == null) manager.NetworkConfig = new NetworkConfig();
             manager.NetworkConfig.NetworkTransport = transport;
-            var controller = GetComponent<DuelNetworkController>() ?? gameObject.AddComponent<DuelNetworkController>();
-            controller.Initialize(manager);
-            manager.OnTransportFailure += OnTransportFailure;
-            manager.OnClientConnectedCallback += OnClientConnected;
-            manager.OnClientDisconnectCallback += OnClientDisconnected;
+            if (Application.isMobilePlatform)
+            {
+                photonController = GetComponent<PhotonDuelController>() ?? gameObject.AddComponent<PhotonDuelController>();
+            }
+            else
+            {
+                duelController = GetComponent<DuelNetworkController>() ?? gameObject.AddComponent<DuelNetworkController>();
+                duelController.Initialize(manager);
+                manager.OnTransportFailure += OnTransportFailure;
+                manager.OnClientConnectedCallback += OnClientConnected;
+                manager.OnClientDisconnectCallback += OnClientDisconnected;
+            }
             Debug.Log("[Network] Local networking initialized.");
         }
 
@@ -125,21 +135,16 @@ namespace ComeAndFight.Networking
             lastConnectionError = null;
             try
             {
-                await EnsureUnityServicesAsync();
-                var allocation = await RelayService.Instance.CreateAllocationAsync(1);
-                roomCode = await RelayService.Instance.GetJoinCodeAsync(allocation.AllocationId);
-                var unityTransport = transport as UnityTransport;
-                if (!unityTransport) throw new InvalidOperationException("Android Relay requires Unity Transport.");
-                unityTransport.SetRelayServerData(new RelayServerData(allocation, "dtls"));
-                bool started = manager.StartHost();
+                roomCode = Guid.NewGuid().ToString("N").Substring(0, 6).ToUpperInvariant();
+                bool started = await photonController.StartHostAsync(roomCode, AndroidPhotonRegion);
                 if (started) localAddressSummary = roomCode;
-                else lastConnectionError = "Relay 房间创建成功，但 Host 启动失败。";
-                Debug.Log(started ? $"[Network] Android Relay Host started. Join code: {roomCode}." : "[Network] Android Relay Host failed to start.");
+                else lastConnectionError = "Photon 房间创建失败。请检查 App ID、网络和节点权限。";
+                Debug.Log(started ? $"[Network] Android Photon Host started. Room code: {roomCode}." : "[Network] Android Photon Host failed to start.");
                 return started;
             }
             catch (Exception exception)
             {
-                lastConnectionError = FormatRelayError("创建 Relay 房间", exception);
+                lastConnectionError = "创建 Photon 房间失败：" + exception.Message;
                 Debug.LogError("[Network] " + lastConnectionError);
                 return false;
             }
@@ -176,43 +181,20 @@ namespace ComeAndFight.Networking
                 roomCode = address.Trim().ToUpperInvariant();
                 if (string.IsNullOrWhiteSpace(roomCode))
                 {
-                    lastConnectionError = "请输入房主分享的 Relay 房间码。";
+                    lastConnectionError = "请输入房主分享的 Photon 房间码。";
                     return false;
                 }
-                await EnsureUnityServicesAsync();
-                var allocation = await RelayService.Instance.JoinAllocationAsync(roomCode);
-                var unityTransport = transport as UnityTransport;
-                if (!unityTransport) throw new InvalidOperationException("Android Relay requires Unity Transport.");
-                unityTransport.SetRelayServerData(new RelayServerData(allocation, "dtls"));
-                bool started = manager.StartClient();
-                if (!started) lastConnectionError = "已找到 Relay 房间，但 Client 启动失败。";
-                Debug.Log(started ? $"[Network] Android Client joining Relay code {roomCode}." : "[Network] Android Relay Client failed to start.");
+                bool started = await photonController.StartClientAsync(roomCode, AndroidPhotonRegion);
+                if (!started) lastConnectionError = "加入 Photon 房间失败。请确认房间码、网络和节点一致。";
+                Debug.Log(started ? $"[Network] Android Client joining Photon room {roomCode}." : "[Network] Android Photon Client failed to start.");
                 return started;
             }
             catch (Exception exception)
             {
-                lastConnectionError = FormatRelayError("加入 Relay 房间", exception);
+                lastConnectionError = "加入 Photon 房间失败：" + exception.Message;
                 Debug.LogError("[Network] " + lastConnectionError);
                 return false;
             }
-        }
-
-        static string FormatRelayError(string operation, Exception exception)
-        {
-            string details = exception?.Message ?? "未知错误";
-            if (details.IndexOf("451", StringComparison.OrdinalIgnoreCase) >= 0
-                || details.IndexOf("Unavailable For Legal Reasons", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                return "Unity Relay 当前无法在所在地区提供服务（HTTP 451）。这不是房间码、防火墙或网络设置问题，需要更换联机后端。";
-            }
-
-            return operation + "失败：" + details;
-        }
-
-        static async Task EnsureUnityServicesAsync()
-        {
-            if (UnityServices.State == ServicesInitializationState.Uninitialized) await UnityServices.InitializeAsync();
-            if (!AuthenticationService.Instance.IsSignedIn) await AuthenticationService.Instance.SignInAnonymouslyAsync();
         }
 
         bool FailSteamStart()
@@ -224,6 +206,12 @@ namespace ComeAndFight.Networking
 
         public void Shutdown()
         {
+            if (Application.isMobilePlatform)
+            {
+                if (photonController) photonController.Shutdown();
+                roomCode = null;
+                return;
+            }
             if (!manager || !manager.IsListening) return;
             manager.Shutdown();
             roomCode = null;
@@ -232,6 +220,12 @@ namespace ComeAndFight.Networking
 
         bool CanStart()
         {
+            if (Application.isMobilePlatform)
+            {
+                if (!photonController) { Debug.LogError("[Network] Photon controller is unavailable."); return false; }
+                if (photonController.IsRunning) { Debug.LogWarning("[Network] A Photon session is already running."); return false; }
+                return true;
+            }
             if (!manager) { Debug.LogError("[Network] NetworkManager is unavailable."); return false; }
             if (manager.IsListening) { Debug.LogWarning("[Network] A network session is already running."); return false; }
             return true;
@@ -257,6 +251,7 @@ namespace ComeAndFight.Networking
             if (manager) manager.OnClientConnectedCallback -= OnClientConnected;
             if (manager) manager.OnClientDisconnectCallback -= OnClientDisconnected;
             if (manager && manager.IsListening) manager.Shutdown();
+            if (photonController) photonController.Shutdown();
             if (steamInitialized) DesktopSteamBridge.Shutdown();
         }
 
@@ -269,14 +264,14 @@ namespace ComeAndFight.Networking
         {
             if (!manager || clientId != manager.LocalClientId || manager.IsHost) return;
             lastConnectionError = Application.isMobilePlatform
-                ? $"无法加入 Relay 房间 {roomCode}。请确认房间码有效且网络可访问 Unity 服务。"
+                ? $"无法加入 Photon 房间 {roomCode}。请确认房间码有效且双方使用同一节点。"
                 : $"无法连接 Steam ID {address}。请确认双方 Steam 在线、账号不同且房主已创建房间。";
         }
 
         void OnTransportFailure()
         {
             lastConnectionError = Application.isMobilePlatform
-                ? "Relay 网络传输失败，请检查移动网络和 Unity 服务状态。"
+                ? "Photon 网络传输失败，请检查移动网络和节点状态。"
                 : $"Steam 网络传输失败：{address}。请检查 Steam 登录状态和 App ID。";
             Debug.LogError("[Network] " + lastConnectionError);
         }

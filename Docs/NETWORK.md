@@ -1,153 +1,47 @@
 # Come And Fight — Network Development
 
-## Current stage
+## Current transport selection
 
-Phase 4 now has two platform-selected transports while preserving the same Host-authoritative gameplay protocol:
+- Windows/macOS/Linux: Steam Networking Sockets.
+- Android: Photon Fusion 2 Host Mode, using Photon relay (`DisableNATPunchthrough = true`).
+- Single-player continues to use the local rules pipeline and does not depend on either service.
+- PC/Android cross-platform rooms remain deferred because the desktop and Android builds use different backends.
 
-- Windows/macOS/Linux use Steam Networking Sockets.
-- Android uses Unity Relay over DTLS with an anonymous Unity Authentication session and a short room code.
+Both online paths preserve the same Host-authoritative protocol. The Host is Player A, the first remote player is Player B, and only the Host calls `TurnResolver.Resolve`. Reliable packets carry `BeginTurn`, `SubmitAction`, and `ResolveTurn`; a submission contains only its `turnId` and action, while the result contains the complete authoritative `DuelState`.
 
-The Android path is Android-to-Android only in this milestone. PC-to-Android cross-platform play remains deferred because the PC build still uses Steam transport.
+## Android Photon setup
 
-The first Steam milestone uses the Host's 17-digit Steam ID as the room address. Steam Lobby and friend invitations are deferred until the transport is verified on two PCs.
+Photon Fusion 2.1.2 is imported under `Assets/Photon`. The Fusion App ID is stored in `Assets/Photon/Fusion/Resources/PhotonAppSettings.asset`; do not publish that value in screenshots or public repositories unless intended.
 
-Verification status (2026-09-17): passed with two Windows player instances on one PC. The Host assigned client 0 to Player A and the connecting client 1 to Player B; the client identified itself as Player B.
+Photon confirmed through ticket 76221 that this Fusion App ID is unlocked for China Mainland. Android now requests region `cn`; Fusion automatically routes that region through the China Name Server (`ns.photonengine.cn`). Both devices must use this same build, App ID, and region because rooms are isolated between Photon regions.
 
-Implemented:
+Unity Gaming Services, anonymous Authentication, and Unity Relay are no longer used by Android. The earlier Unity Relay path returned HTTP 451 in mainland China; enabling Unity Cloud Services cannot bypass that regional policy response.
 
-- Netcode for GameObjects and Unity Transport connection lifecycle.
-- Explicit Player A/Player B identity and a two-player limit.
-- Reliable ordered messages for `BeginTurn`, `SubmitAction`, and `ResolveTurn`.
-- Every submission carries `turnId` and `action` only.
-- Host validation of sender, phase, `turnId`, duplicates, Action range, and Thrust recovery.
-- Host-owned deadline with `Parry` as the missing-action fallback.
-- Host-only `TurnResolver.Resolve` and a complete authoritative `DuelState` in every result.
-- Old or mismatched result messages are ignored by the Client.
-- A scene-authored menu for single-player and platform-specific online rooms.
-- Both peers feed the received authoritative result into the existing `DuelGame` reveal and animation pipeline.
-- Android Host creation, one-tap room-code copying, room-code joining, and system-keyboard input.
-- Desktop-only Steam integration isolated in `ComeAndFight.Steam`, so Android does not compile or load the Steam transport.
+## Android build and two-device test
 
-Not implemented: PC/Android cross-platform rooms, in-match reconnect, rematch agreement, Steam Lobby, or friend invitations.
+1. Close Photon Fusion Hub so Unity can refresh and compile the project.
+2. Confirm the Console has no red compile errors.
+3. Open `File > Build Settings`, select Android, and use `Build` or `Build And Run`. Leave `Export Project` and `Build App Bundle` unchecked for an ordinary APK test.
+4. Install the same APK on two Android devices. Both devices need normal internet access, but they do not need to be on the same Wi-Fi, expose an IP address, open ports, or change firewall rules.
+5. On device A open online battle and choose `创建 Photon 房间`. Send the displayed six-character room code to device B.
+6. On device B tap the room-code field, enter the code, and choose `通过房间码加入`.
+7. Verify the room UI closes on both devices and each player can choose one action per turn. Verify both devices show the same score, positions, and round number.
 
-## Windows player settings
+If creation or joining fails, capture the full Unity/Android log containing `[Photon]`. Confirm both devices have the identical APK and App ID, use the identical region, and enter the room code without spaces. A room disappears when its Host exits.
 
-Windows builds start in a resizable `1280 × 720` window. The game continues running while another window has focus, which allows Host and Client instances to be tested side by side. Players can still use the normal fullscreen shortcut because fullscreen switching remains enabled.
-
-The networking assembly calls the pure `TurnResolver`; the rules assembly does not reference NGO. Single-player gameplay does not depend on networking.
-
-## Packages
-
-- `com.unity.netcode.gameobjects` 1.7.1
-- `com.unity.transport` 1.4.0 (the version required by NGO 1.7.1)
-- `com.unity.services.authentication` 2.7.4
-- `com.unity.services.relay` 1.2.0
-- `com.rlabrecque.steamworks.net` (pinned Git revision)
-- `com.community.netcode.transport.steamnetworkingsockets` (pinned Git revision)
-
-## Steam development test
+## Steam desktop test
 
 1. Start Steam on both PCs and sign into two different Steam accounts.
-2. Make a Windows Build. During the current test phase, the build postprocessor copies `steam_appid.txt` with Valve's development App ID `480` beside the executable for both normal and Development builds.
-3. Start the game on both PCs. The Host creates a room, then clicks `复制房主 Steam ID` and sends the copied 17-digit ID to the Client.
-4. The Client enters that Steam ID and joins. IP addresses, port forwarding, and UDP firewall rules are not used by this path.
+2. Build the Windows player. During development the postprocessor places `steam_appid.txt` with Valve test App ID 480 beside the executable.
+3. The Host creates a room and uses `复制房主 Steam ID`.
+4. The Client enters that 17-digit Steam ID and joins.
 
-App ID `480` is for development only. Before release, replace it with the project's assigned Steam App ID and do not ship `steam_appid.txt`; Steam supplies the App ID when launching the released game.
+App ID 480 is development-only. Before release, replace it with the assigned Steam App ID and do not ship `steam_appid.txt`.
 
-## Platform selection
+## Architecture and current limitations
 
-- Windows/macOS/Linux desktop builds select Steam Networking Sockets automatically.
-- Android builds exclude the desktop-only Steam assembly and select Unity Transport + Relay automatically.
-- Android creates a Relay allocation for one remote player, signs in anonymously, and uses a DTLS-protected Relay connection. No LAN IP, firewall rule, public IP, or port forwarding is required.
-- Android uses both ARMv7 and ARM64 architectures, fullscreen rendering, autorotation, touch-only action labels, and the system Back button to return to the mode menu or quit.
-- Cross-platform networking is intentionally deferred. A later milestone must move both PC and Android onto a common backend for mixed-platform matches.
+`ComeAndFight.Networking` owns connection identity, phases, deadlines, submissions, and authoritative state. `ComeAndFight.Steam` is desktop-only, so Android does not compile or load Steamworks. `PhotonDuelController` is used only on Android and communicates with Fusion through reliable data messages rather than NetworkObjects, which keeps the existing turn resolver and presentation pipeline unchanged.
 
-## Unity Cloud setup required before Android testing
+The current milestone does not implement reconnect, host migration, rematch agreement, Steam Lobby/friend invitations, or mixed PC/Android rooms. Photon room codes are six uppercase hexadecimal characters and are temporary.
 
-The project files currently do not contain a Unity Cloud Project ID. Before Relay can work at runtime:
-
-1. Open the project in Unity while signed in.
-2. Open `Edit > Project Settings > Services` (or the Services window in this Unity version).
-3. Link this local project to a Unity Cloud project owned by your organization.
-4. In the Unity Dashboard for that project, enable Multiplayer/Relay and accept any required terms.
-5. Return to Unity and wait until the Authentication and Relay packages finish importing without Console errors.
-
-Without this link, the Android UI will open normally but room creation reports a Unity Services initialization/project configuration error.
-
-## Android Relay test
-
-1. Build and install the APK on two Android devices with internet access.
-2. On device A choose `Android Relay 对战`, then `创建 Relay 房间`.
-3. After the room code appears, tap `复制 Relay 房间码` and send it to device B.
-4. On device B open the same menu, tap the room-code field, paste or type the code, then choose `通过房间码加入`.
-5. Verify both menus close and each device can submit exactly one action per turn.
-
-Relay codes are temporary: if the Host closes the app or shuts down the session, create a new room and share its new code.
-
-### Regional availability
-
-The Relay allocation API can return HTTP 451 when Unity cannot provide the service in the player's region for legal reasons. This is a server-side policy response, not a firewall, room-code, or Android network-permission failure. When this occurs, the Android release needs a different, region-compliant relay/backend; changing local Wi-Fi or opening ports does not fix it.
-
-## Legacy direct-connection test
-
-The default endpoint is `127.0.0.1:7777`. This path remains useful for editor/protocol diagnostics but is no longer exposed by the player menu.
-
-### Menu workflow
-
-Use command-line roles or development-only transport diagnostics if direct Unity Transport testing is needed. Shipping desktop UI uses Steam ID and shipping Android UI uses Relay code; neither asks for an IP address.
-
-The online menu is serialized under `Battle UI/Network Menu` in `SampleScene`. `NetworkUiSceneInstaller` is an editor-only reproducible scene installer; runtime code does not construct UI objects.
-
-### Development shortcuts
-
-1. Run two Windows instances.
-2. Press `F5` in the first instance to start Host.
-3. Press `F6` in the second instance to start Client.
-4. Confirm logs show server start, connection, and Player A/Player B identification.
-5. Press `F7` to disconnect.
-
-When both players are connected and a turn starts, submit a network action with:
-
-- `1`: Advance
-- `2`: Retreat
-- `3`: Thrust
-- `4`: Parry
-
-Standalone instances can start automatically:
-
-```text
-Come And Fight!.exe -caf-role host
-Come And Fight!.exe -caf-role client -caf-address 127.0.0.1 -caf-port 7777
-```
-
-For automated protocol testing, add `-caf-auto-action Advance`, `Retreat`, `Thrust`, or `Parry`. The instance submits that action once per turn.
-
-Additional automated exception flags:
-
-- `-caf-auto-delay <seconds>` delays each automatic submission.
-- `-caf-auto-skip-turn <turnId>` leaves one turn unanswered for timeout testing.
-- `-caf-auto-duplicate` resends the same choice.
-- `-caf-auto-stale` sends the previous `turnId` after the current submission.
-- `-caf-auto-disconnect-after-submit` performs an NGO shutdown shortly after submission.
-
-Expected logs include `Local networking initialized`, `Host started`, `Client connecting`, `Client <id> assigned to Player A/B`, and `Local player identified as Player A/B`.
-
-## Architecture and limitations
-
-`ComeAndFight.Networking` is a separate assembly. It owns connection identity, the network turn phase, server deadline, submitted choices, and the authoritative match state. Only the Host calls `TurnResolver.Resolve`. The Host is temporarily Player A and the first remote client Player B; this mapping is explicit and isolated for later replacement.
-
-Phase 3 verification (2026-09-17): two Windows instances completed a full automatic match while network results drove the existing presentation layer. Host and Client logged identical action pairs and authoritative state summaries for every `turnId`; the match ended at the same 2–0 score on both peers. No presentation integration exceptions occurred.
-
-The rules and serialization regression suite currently passes 13/13 tests. After a manual two-PC LAN pass of the exception matrix below, the next network stage is Relay.
-
-Direct-connection exception verification (2026-09-17):
-
-- Missing Client Action timed out to Host-selected `Parry`.
-- Duplicate submissions were rejected without additional resolution.
-- Previous-turn submissions were rejected by `turnId`.
-- Client graceful disconnect after submission paused the Host before resolution.
-- Host graceful disconnect paused the Client.
-
-A hard process crash or physical network loss is detected by the transport timeout rather than immediately. With the current two-second decision window, that timeout can occur after the Host deadline. Fast failure detection, heartbeat, and resync remain part of the later reconnect design; the current guarantee applies to explicit disconnects.
-
-Automated regression status: all 12 existing EditMode duel-rule tests pass after adding the network assembly.
+Previous protocol regression coverage includes missing-action timeout to Parry, duplicate/stale submission rejection, authoritative result agreement, and disconnect pausing. The existing duel-rule EditMode tests remain the rules-level safety net; the Photon path still requires the physical two-device test above.
