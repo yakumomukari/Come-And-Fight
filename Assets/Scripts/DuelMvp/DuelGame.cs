@@ -15,7 +15,9 @@ namespace ComeAndFight
         DuelAction aChoice, bChoice;
         float deadline;
         int latestChoiceFrame = -1;
-        bool localTwoPlayer;
+        bool onlineMode;
+        bool inputLocked;
+        bool localPlayerIsA = true;
         TurnPhase phase;
         string status = "选择行动";
         public Transform playerA, playerB, swordA, swordB;
@@ -28,13 +30,15 @@ namespace ComeAndFight
         public TurnPhase Phase => phase;
         public bool IsResolving => phase == TurnPhase.Reveal || phase == TurnPhase.Result;
         public bool IsGameOver => phase == TurnPhase.GameOver;
-        public bool IsLocalTwoPlayer => localTwoPlayer;
+        public bool IsOnlineMode => onlineMode;
+        public bool InputLocked { get => inputLocked; set => inputLocked = value; }
         public bool ALocked => aChoice != DuelAction.None;
         public bool BLocked => bChoice != DuelAction.None;
         public DuelAction AChoice => aChoice;
-        public bool AThrustRecovering => state.aThrustRecovering;
+        public bool AThrustRecovering => onlineMode ? (localPlayerIsA ? state.aThrustRecovering : state.bThrustRecovering) : state.aThrustRecovering;
         public bool BThrustRecovering => state.bThrustRecovering;
         public float RemainingTime => phase == TurnPhase.Choosing ? Mathf.Max(0, deadline - Time.time) : 0;
+        public event System.Action<DuelAction> OnlineActionSelected;
 
         void Awake()
         {
@@ -62,7 +66,7 @@ namespace ComeAndFight
 
         void Update()
         {
-            if (Input.GetKeyDown(KeyCode.F1)) ToggleMode();
+            if (inputLocked) return;
             if (Input.GetKeyDown(KeyCode.R)) RestartMatch();
             if (phase != TurnPhase.Choosing) return;
 
@@ -73,19 +77,13 @@ namespace ComeAndFight
                 else if (Input.GetKeyDown(KeyCode.J)) SelectA(DuelAction.Thrust);
                 else if (Input.GetKeyDown(KeyCode.K)) SelectA(DuelAction.Parry);
             }
-            if (localTwoPlayer && bChoice == DuelAction.None)
-            {
-                if (Input.GetKeyDown(KeyCode.LeftArrow)) SelectB(DuelAction.Advance);
-                else if (Input.GetKeyDown(KeyCode.RightArrow)) SelectB(DuelAction.Retreat);
-                else if (Input.GetKeyDown(KeyCode.Keypad1) || Input.GetKeyDown(KeyCode.Comma)) SelectB(DuelAction.Thrust);
-                else if (Input.GetKeyDown(KeyCode.Keypad2) || Input.GetKeyDown(KeyCode.Period)) SelectB(DuelAction.Parry);
-            }
+            if (onlineMode) return;
             bool timedOut = Time.time >= deadline;
-            bool bothReady = aChoice != DuelAction.None && (localTwoPlayer ? bChoice != DuelAction.None : true);
+            bool bothReady = aChoice != DuelAction.None;
             if ((timedOut || bothReady) && Time.frameCount > latestChoiceFrame)
             {
                 if (aChoice == DuelAction.None) aChoice = DuelAction.Parry;
-                if (bChoice == DuelAction.None) bChoice = localTwoPlayer ? DuelAction.Parry : ChooseAi();
+                if (bChoice == DuelAction.None) bChoice = ChooseAi();
                 StartCoroutine(ResolveTurn());
             }
         }
@@ -213,13 +211,13 @@ namespace ComeAndFight
             deadline = Time.time + DecisionSeconds;
             phase = TurnPhase.Choosing;
             if (state.aThrustRecovering) status = "空刺恢复：本回合不能击剑";
-            else if (localTwoPlayer && state.bThrustRecovering) status = "B 空刺恢复：本回合不能击剑";
             else status = "选择行动";
             RefreshBoard();
         }
 
         public void RestartMatch()
         {
+            if (onlineMode) { status = "在线比赛只能由房主通过重赛协议重置"; return; }
             StopAllCoroutines();
             state = DuelState.NewMatch();
             bodyA.color = bodyAColor; bodyB.color = bodyBColor;
@@ -228,19 +226,15 @@ namespace ComeAndFight
             BeginTurn();
         }
 
-        public void ToggleMode()
-        {
-            localTwoPlayer = !localTwoPlayer;
-            RestartMatch();
-        }
         void SnapPlayers() { playerA.localPosition = new Vector3(CellX(state.aPosition), 0); playerB.localPosition = new Vector3(CellX(state.bPosition), 0); }
         void RefreshBoard() { for (int i = 0; i < cells.Length; i++) cells[i].color = state.suddenDeath && TurnResolver.IsBurning(i + 1, state.fireDepth) ? new Color(1f, .22f, .05f) : new Color(.7f, .74f, .8f); }
         static float CellX(int cell) => (cell - 4) * 82f;
 
         public void SelectA(DuelAction action)
         {
-            if (phase != TurnPhase.Choosing || aChoice != DuelAction.None) return;
-            if (!TurnResolver.CanChoose(state, true, action))
+            if (inputLocked || phase != TurnPhase.Choosing || aChoice != DuelAction.None) return;
+            bool selectingA = !onlineMode || localPlayerIsA;
+            if (!TurnResolver.CanChoose(state, selectingA, action))
             {
                 status = "空刺恢复：本回合不能击剑";
                 return;
@@ -248,14 +242,70 @@ namespace ComeAndFight
             aChoice = action;
             latestChoiceFrame = Time.frameCount;
             status = "已选择：" + ActionName(action);
+            if (onlineMode) OnlineActionSelected?.Invoke(action);
         }
 
-        void SelectB(DuelAction action)
+        public void EnterOnlineMode(bool isPlayerA)
         {
-            if (phase != TurnPhase.Choosing || bChoice != DuelAction.None) return;
-            if (!TurnResolver.CanChoose(state, false, action)) return;
-            bChoice = action;
-            latestChoiceFrame = Time.frameCount;
+            StopAllCoroutines();
+            onlineMode = true;
+            localPlayerIsA = isPlayerA;
+            aChoice = bChoice = DuelAction.None;
+            phase = TurnPhase.Result;
+            status = "等待对手连接";
+        }
+
+        public void ExitOnlineMode()
+        {
+            onlineMode = false;
+            RestartMatch();
+        }
+
+        public void BeginOnlineTurn(DuelState authoritativeState, float seconds)
+        {
+            StopAllCoroutines();
+            state = authoritativeState;
+            aChoice = bChoice = DuelAction.None;
+            deadline = Time.time + seconds;
+            phase = TurnPhase.Choosing;
+            status = AThrustRecovering ? "空刺恢复：本回合不能击剑" : "选择行动";
+            RefreshBoard();
+            SnapPlayers();
+        }
+
+        public void ApplyOnlineResolution(DuelAction actionA, DuelAction actionB, TurnResult result)
+        {
+            if (!onlineMode || phase != TurnPhase.Choosing) return;
+            StartCoroutine(PresentOnlineResolution(actionA, actionB, result));
+        }
+
+        public void PauseOnlineMatch(string reason)
+        {
+            if (!onlineMode) return;
+            StopAllCoroutines();
+            phase = TurnPhase.Result;
+            status = reason;
+        }
+
+        IEnumerator PresentOnlineResolution(DuelAction actionA, DuelAction actionB, TurnResult result)
+        {
+            aChoice = actionA; bChoice = actionB;
+            phase = TurnPhase.Reveal;
+            status = "A：" + ActionName(aChoice) + "  |  B：" + ActionName(bChoice);
+            yield return new WaitForSeconds(RevealSeconds);
+            DuelState before = state;
+            state = result.state;
+            phase = TurnPhase.Result;
+            status = ResultMessage(result, before);
+            RefreshBoard();
+            yield return AnimateResolution(before, result);
+            yield return new WaitForSeconds(ResultSeconds);
+            if (result.matchEnded)
+            {
+                phase = TurnPhase.GameOver;
+                status = (state.aScore > state.bScore ? "玩家 A" : "玩家 B") + " 获胜！";
+            }
+            else status = "等待下一回合";
         }
 
         public static string ActionName(DuelAction action)

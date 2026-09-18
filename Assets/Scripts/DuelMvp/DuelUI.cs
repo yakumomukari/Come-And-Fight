@@ -26,8 +26,8 @@ namespace ComeAndFight
             statusText.text = game.Status;
             timerText.text = TimerText();
             bool portrait = Screen.height > Screen.width;
-            modeText.text = game.IsLocalTwoPlayer ? (portrait ? "本地双人模式" : "本地双人：B 使用 ←前进 / →后退 / ,击剑 / .招架") : "玩家 VS AI";
-            helpText.text = portrait ? "触摸按钮选择行动" : "F1 切换模式  ·  R 重新开始";
+            modeText.text = game.IsOnlineMode ? "在线双人模式" : "玩家 VS AI";
+            helpText.text = game.IsOnlineMode ? "等待双方选择后同时揭晓" : Application.isMobilePlatform || portrait ? "触摸按钮选择行动" : "R 重新开始";
             actionPanel.SetActive(true);
             timerText.gameObject.SetActive(!game.IsGameOver);
             RefreshButtons();
@@ -37,10 +37,15 @@ namespace ComeAndFight
         {
             if (game.Phase == DuelGame.TurnPhase.Reveal) return "行动公开";
             if (game.Phase == DuelGame.TurnPhase.Result) return "结算中";
+            if (game.IsOnlineMode)
+            {
+                string local = game.ALocked ? "已锁定选择" : "等待你选择";
+                if (!game.ALocked && game.AThrustRecovering) local += "（击剑恢复）";
+                return "剩余 " + game.RemainingTime.ToString("0.0") + " 秒  ·  " + local;
+            }
             string a = game.ALocked ? "A 已选择：" + DuelGame.ActionName(game.AChoice) : "A 等待选择";
             if (!game.ALocked && game.AThrustRecovering) a += "（击剑恢复）";
-            string b = game.IsLocalTwoPlayer ? (game.BLocked ? "  ·  B 已锁定" : game.BThrustRecovering ? "  ·  B 击剑恢复" : "  ·  B 等待选择") : "";
-            return "剩余 " + game.RemainingTime.ToString("0.0") + " 秒  ·  " + a + b;
+            return "剩余 " + game.RemainingTime.ToString("0.0") + " 秒  ·  " + a;
         }
 
         void RefreshButtons()
@@ -51,7 +56,7 @@ namespace ComeAndFight
                 if (!button) continue;
                 DuelAction action = ActionForButton(button.name);
                 bool selected = game.ALocked && action == game.AChoice;
-                bool gameOverCommand = game.IsGameOver && (action == DuelAction.Retreat || action == DuelAction.Advance);
+                bool gameOverCommand = !game.IsOnlineMode && game.IsGameOver && (action == DuelAction.Retreat || action == DuelAction.Advance);
                 bool recovering = action == DuelAction.Thrust && game.AThrustRecovering;
                 button.interactable = canChoose && !recovering || gameOverCommand;
                 var image = button.targetGraphic as Image;
@@ -59,7 +64,7 @@ namespace ComeAndFight
                 var label = button.GetComponentInChildren<Text>();
                 if (label)
                 {
-                    label.text = game.IsGameOver && action == DuelAction.Retreat ? "重新开始" : game.IsGameOver && action == DuelAction.Advance ? "切换模式" : Caption(action, recovering);
+                    label.text = game.IsGameOver && (action == DuelAction.Retreat || action == DuelAction.Advance) ? "重新开始" : Caption(action, recovering);
                     label.color = selected ? Color.white : new Color(1f, 1f, 1f, button.interactable ? 1f : .62f);
                 }
             }
@@ -67,8 +72,8 @@ namespace ComeAndFight
 
         static string Caption(DuelAction action, bool recovering)
         {
-            if (recovering) return Screen.height > Screen.width ? "击剑（恢复）" : "J / 击剑（恢复）";
-            if (Screen.height > Screen.width) return DuelGame.ActionName(action);
+            if (recovering) return Application.isMobilePlatform || Screen.height > Screen.width ? "击剑（恢复）" : "J / 击剑（恢复）";
+            if (Application.isMobilePlatform || Screen.height > Screen.width) return DuelGame.ActionName(action);
             if (action == DuelAction.Retreat) return "A / 后退";
             if (action == DuelAction.Advance) return "D / 前进";
             if (action == DuelAction.Thrust) return "J / 击剑";
@@ -85,7 +90,7 @@ namespace ComeAndFight
         }
 
         public void SelectRetreat() { if (game && game.IsGameOver) game.RestartMatch(); else Select(DuelAction.Retreat); }
-        public void SelectAdvance() { if (game && game.IsGameOver) game.ToggleMode(); else Select(DuelAction.Advance); }
+        public void SelectAdvance() { if (game && game.IsGameOver) game.RestartMatch(); else Select(DuelAction.Advance); }
         public void SelectThrust() => Select(DuelAction.Thrust);
         public void SelectParry() => Select(DuelAction.Parry);
         void Select(DuelAction action) { if (game) game.SelectA(action); }

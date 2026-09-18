@@ -1,0 +1,14 @@
+{
+    "name": "ComeAndFight.Networking",
+    "rootNamespace": "ComeAndFight.Networking",
+    "references": [
+        "ComeAndFight.Runtime",
+        "Unity.Collections",
+        "Unity.Netcode.Runtime",
+        "Unity.Networking.Transport",
+        "Unity.Services.Core",
+        "Unity.Services.Authentication",
+        "Unity.Services.Relay"
+    ],
+    "autoReferenced": true
+}

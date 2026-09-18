@@ -2,7 +2,10 @@
     "name": "ComeAndFight.Tests",
     "rootNamespace": "ComeAndFight.Tests",
     "references": [
-        "ComeAndFight.Runtime"
+        "ComeAndFight.Runtime",
+        "ComeAndFight.Networking",
+        "Unity.Collections",
+        "Unity.Netcode.Runtime"
     ],
     "includePlatforms": [
         "Editor"
